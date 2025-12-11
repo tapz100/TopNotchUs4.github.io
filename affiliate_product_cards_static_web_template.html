@@ -1,0 +1,222 @@
+<!--
+Project: Affiliate Product Cards - Production-ready (Excel in repo)
+Updated: Production-focused index.html that fetches products.xlsx from the repository root and renders product cards.
+
+Key features:
+- Normal users (no query parameter) see only product cards. No upload controls are visible.
+- Maintainers can add ?admin=1 to the site URL to enable admin-only controls: Upload Excel, Load sample, Re-fetch from site root. This keeps the public UI clean while allowing maintainers to debug in the browser if needed.
+- Automatic fetch on page load for products.xlsx with clear console logging and a brief friendly message on failure.
+- Embedded sample data exists but is only used in admin mode or when explicitly requested.
+- Uses SheetJS to parse .xlsx in-browser when the file is successfully fetched. In production, the file should be placed in repo root so relative fetch works on GitHub Pages or Netlify.
+
+Deployment notes:
+- Place this index.html at repo root and add products.xlsx to the same repo root. Deploy to GitHub Pages or Netlify. Visitors will see product cards only.
+- Avoid opening index.html via file:// in a browser. For local testing run a simple static server: `npx serve` or `python -m http.server`.
+
+Excel format:
+- First sheet with header row. Accepted headers (case-insensitive): Product name, Product description, Product affiliate link, Product image
+
+Admin mode:
+- Append ?admin=1 to the URL to reveal debugging controls. Use for one-off uploads or local debugging.
+
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Products</title>
+  <meta name="description" content="Curated product cards. Some product links are affiliate links." />
+  <style>
+    :root{--card-bg:#fff;--card-border:#e6e6e6;--muted:#666}
+    body{font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;margin:0;background:#f7f7fb;color:#111}
+    header{padding:20px 24px;background:#fff;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between}
+    .wrap{max-width:1100px;margin:28px auto;padding:0 16px}
+    h1{margin:0;font-size:20px}
+    .disclosure{font-size:13px;color:var(--muted);margin-top:6px}
+    .lists{display:grid;gap:28px}
+    .list{margin-top:8px}
+    .list h2{font-size:16px;margin:6px 0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+    .card{background:var(--card-bg);border:1px solid var(--card-border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 6px 18px rgba(20,20,40,0.03)}
+    .card img{width:100%;height:160px;object-fit:cover;border-radius:8px}
+    .meta{display:flex;flex-direction:column;gap:6px}
+    .name{font-weight:700;font-size:15px}
+    .desc{font-size:13px;color:var(--muted)}
+    .actions{margin-top:auto;display:flex;gap:8px}
+    a.button{flex:1;text-decoration:none;padding:10px 12px;border-radius:8px;text-align:center;border:1px solid #1111;color:#1111;font-weight:600}
+    footer{padding:24px;text-align:center;color:var(--muted);font-size:13px}
+    .error{color:#b00;background:#fff4f4;padding:12px;border:1px solid #f4c2c2;border-radius:8px}
+    .info{color:#085; background:#f2fff2;padding:10px;border-radius:8px;border:1px solid #daf4da}
+    .muted{color:var(--muted);font-size:13px}
+    /* admin-only styles */
+    .admin-controls{display:none;margin:12px 0;gap:8px}
+    .admin-controls.visible{display:flex}
+    button{padding:8px 12px;border-radius:8px;border:1px solid #ccc;background:#fff;cursor:pointer}
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Curated Products</h1>
+      <div class="disclosure">Some product links are affiliate links. We may earn a commission when you buy through them.</div>
+    </div>
+    <div class="muted">Contact</div>
+  </header>
+
+  <main class="wrap">
+    <div id="status" class="info">Loading products...</div>
+
+    <div id="adminControls" class="admin-controls" aria-hidden="true">
+      <input id="fileInput" type="file" accept=".xlsx,.xls" />
+      <button id="btnFetch">Re-fetch from products.xlsx</button>
+      <button id="btnSample">Load sample data</button>
+    </div>
+
+    <div class="lists">
+      <section class="list">
+        <h2>Products</h2>
+        <div id="grid" class="grid" role="list"></div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    Excel columns: Product name, Product description, Product affiliate link, Product image. Place <code>products.xlsx</code> at repo root for production.
+  </footer>
+
+  <!-- SheetJS -->
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+
+  <script>
+    const XLSX_SRC = 'products.xlsx';
+    const LINK_REL = 'noopener noreferrer nofollow sponsored';
+
+    // Helper
+    function setStatus(msg, isError=false){
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = isError ? 'error' : 'info';
+      console.log(isError ? 'ERROR: ' + msg : msg);
+    }
+
+    function clearGrid(){ document.getElementById('grid').innerHTML = ''; }
+
+    function renderCard(p){
+      const grid = document.getElementById('grid');
+      const card = document.createElement('div'); card.className = 'card'; card.setAttribute('role','listitem');
+
+      const img = document.createElement('img');
+      img.alt = p.name || 'product image';
+      img.loading = 'lazy';
+      img.src = p.image || 'https://via.placeholder.com/400x300?text=No+Image';
+      card.appendChild(img);
+
+      const meta = document.createElement('div'); meta.className = 'meta';
+      const name = document.createElement('div'); name.className = 'name'; name.textContent = p.name || 'Unnamed product';
+      const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = p.description || '';
+      meta.appendChild(name); meta.appendChild(desc); card.appendChild(meta);
+
+      const actions = document.createElement('div'); actions.className = 'actions';
+      const buy = document.createElement('a'); buy.className = 'button';
+      buy.href = p.affiliate || '#';
+      buy.target = '_blank';
+      buy.rel = LINK_REL;
+      buy.textContent = p.affiliate ? 'Buy' : 'No link';
+      if(!p.affiliate) buy.setAttribute('aria-disabled','true');
+      actions.appendChild(buy); card.appendChild(actions);
+
+      grid.appendChild(card);
+    }
+
+    // Normalize header helper
+    function normalize(h){ return (h||'').toString().trim().toLowerCase(); }
+
+    function mapRowToProduct(row){
+      const normalized = {};
+      Object.keys(row || {}).forEach(k => normalized[normalize(k)] = row[k]);
+      return {
+        name: normalized['product name'] || normalized['name'] || '',
+        description: normalized['product description'] || normalized['description'] || '',
+        affiliate: normalized['product affiliate link'] || normalized['affiliate'] || normalized['product link'] || normalized['link'] || '',
+        image: normalized['product image'] || normalized['image'] || ''
+      };
+    }
+
+    function parseWorkbook(workbook){
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, {defval: ''});
+      return rows.map(r => mapRowToProduct(r)).filter(p => p.name || p.affiliate || p.image || p.description);
+    }
+
+    async function fetchAndRender(){
+      try{
+        setStatus('Loading products from repository...');
+        const res = await fetch(XLSX_SRC, {cache: 'no-cache'});
+        if(!res.ok) throw new Error('HTTP ' + res.status);
+        const ab = await res.arrayBuffer();
+        const workbook = XLSX.read(new Uint8Array(ab), {type: 'array'});
+        const products = parseWorkbook(workbook);
+        if(!products || products.length === 0){
+          setStatus('No products found in Excel file. Check headers and rows.', true);
+          return;
+        }
+        clearGrid(); products.forEach(renderCard);
+        setStatus('Showing ' + products.length + ' product(s).');
+      }catch(err){
+        console.error('Fetch/parse error', err);
+        setStatus('Could not load products from repository. If you are a maintainer append ?admin=1 to the URL for admin tools.', true);
+      }
+    }
+
+    // Admin mode detection
+    const urlParams = new URLSearchParams(window.location.search);
+    const isAdmin = urlParams.get('admin') === '1';
+    if(isAdmin){
+      const adminEl = document.getElementById('adminControls');
+      adminEl.classList.add('visible');
+      adminEl.setAttribute('aria-hidden','false');
+    }
+
+    // File upload handler works only in admin mode
+    document.getElementById('fileInput').addEventListener('change', e => {
+      if(!isAdmin) return;
+      const file = e.target.files && e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      setStatus('Parsing uploaded file...');
+      reader.onload = function(ev){
+        try{
+          const data = new Uint8Array(ev.target.result);
+          const workbook = XLSX.read(data, {type: 'array'});
+          const products = parseWorkbook(workbook);
+          if(!products || products.length === 0){ setStatus('No products found in uploaded file.', true); return; }
+          clearGrid(); products.forEach(renderCard);
+          setStatus('Loaded ' + products.length + ' product(s) from uploaded file.');
+        }catch(err){ console.error(err); setStatus('Failed to parse uploaded file.', true); }
+      };
+      reader.onerror = function(){ setStatus('Could not read uploaded file.', true); };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // Admin buttons
+    document.getElementById('btnFetch').addEventListener('click', e => { if(isAdmin) fetchAndRender(); });
+    document.getElementById('btnSample').addEventListener('click', e => {
+      if(!isAdmin) return;
+      const sample = [
+        {name: 'SuperSound X100', description: 'Comfortable noise-cancelling headphones', affiliate: 'https://example.com/?aff=1', image: 'https://via.placeholder.com/400x300?text=Headphones'},
+        {name: 'ClickMaster 60%', description: 'Compact mechanical keyboard', affiliate: 'https://example.com/?aff=2', image: 'https://via.placeholder.com/400x300?text=Keyboard'}
+      ];
+      clearGrid(); sample.forEach(renderCard); setStatus('Loaded sample data (admin).');
+    });
+
+    // Initial automatic load for public site
+    (function(){
+      // Try to fetch silently; errors show a friendly status to users
+      fetchAndRender();
+    })();
+  </script>
+</body>
+</html>
